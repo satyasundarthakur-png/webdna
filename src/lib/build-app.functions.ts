@@ -3,9 +3,12 @@ import JSZip from "jszip";
 
 type BuildInput = { prompt: string };
 
-const FETCH_TIMEOUT_MS = 60_000;
+// Full-app code generation genuinely takes longer than a typical API call —
+// give Gemini real room to finish instead of aborting mid-generation.
+const GEMINI_TIMEOUT_MS = 240_000; // 4 minutes
 const MAX_FILES = 80;
 const MAX_FILE_BYTES = 300 * 1024;
+const MAX_OUTPUT_TOKENS = 32_768;
 
 function slugify(text: string) {
   const s = text
@@ -16,9 +19,9 @@ function slugify(text: string) {
   return s || "app";
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit) {
+async function fetchWithTimeout(url: string, init: RequestInit | undefined, timeoutMs: number) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, { ...init, signal: ctrl.signal });
   } finally {
@@ -46,6 +49,42 @@ function extractJson(text: string): string {
   return candidate.slice(start, end + 1);
 }
 
+async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction: string) {
+  const res = await fetchWithTimeout(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
+        contents: [{ role: "user", parts: [{ text: `Build this app: ${prompt}` }] }],
+        generationConfig: {
+          temperature: 0.3,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          responseMimeType: "application/json",
+        },
+      }),
+    },
+    GEMINI_TIMEOUT_MS,
+  );
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Gemini ${res.status}: ${body.slice(0, 500)}`);
+  }
+
+  const json = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+  };
+  const candidate = json.candidates?.[0];
+  const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  if (!text) {
+    const reason = candidate?.finishReason ? ` (finishReason: ${candidate.finishReason})` : "";
+    throw new Error(`Gemini returned an empty response${reason}`);
+  }
+  return text;
+}
+
 async function callGeminiBuild(apiKey: string, prompt: string): Promise<GeneratedApp> {
   const systemInstruction = `You are a senior full-stack engineer. Given a plain-language app request, design and write a complete, working, minimal-but-functional full-stack web application.
 
@@ -54,7 +93,7 @@ Rules:
 - Include package.json (with correct dependencies/scripts), config files, and a README with setup + run instructions.
 - Keep it runnable locally with "npm install" then the documented start command. Use in-memory or file-based storage if no database is specified, and clearly note that in the README.
 - Do not invent external paid API keys as hard requirements; if an AI/API key is used, read it from an environment variable and degrade gracefully if missing.
-- Keep the file count reasonable (under 40 files) and each file reasonably small — this is a working starter/MVP, not an enterprise monorepo.
+- Keep the file count under 25 and each file concise — this is a working starter/MVP, not an enterprise monorepo. Favor fewer, denser files over many tiny ones so generation finishes reliably.
 - Return ONLY valid JSON matching exactly this shape, no prose outside the JSON, no markdown fences:
 
 {
@@ -70,35 +109,26 @@ Rules:
 
 Every file's "content" must be the complete literal file contents (escaped for JSON string), not a placeholder or diff.`;
 
-  const res = await fetchWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
-        contents: [{ role: "user", parts: [{ text: `Build this app: ${prompt}` }] }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 65536,
-          responseMimeType: "application/json",
-        },
-      }),
-    },
-  );
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Gemini ${res.status}: ${body.slice(0, 500)}`);
+  let text: string;
+  try {
+    text = await callGeminiOnce(apiKey, prompt, systemInstruction);
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === "AbortError";
+    const isTransient =
+      isAbort || (err instanceof Error && /Gemini (429|500|502|503|504)/.test(err.message));
+    if (!isTransient) throw err;
+    // one retry — codegen calls occasionally time out or hit a transient 5xx
+    text = await callGeminiOnce(apiKey, prompt, systemInstruction);
   }
 
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
-  };
-  const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  if (!text) throw new Error("Gemini returned an empty response");
-
-  const parsed = JSON.parse(extractJson(text)) as GeneratedApp;
+  let parsed: GeneratedApp;
+  try {
+    parsed = JSON.parse(extractJson(text)) as GeneratedApp;
+  } catch {
+    throw new Error(
+      "Gemini's response got cut off or wasn't valid JSON — try a shorter/simpler app description and build again.",
+    );
+  }
   if (!parsed.files || !Array.isArray(parsed.files) || parsed.files.length === 0) {
     throw new Error("Gemini response had no files");
   }

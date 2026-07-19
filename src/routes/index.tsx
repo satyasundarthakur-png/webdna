@@ -198,7 +198,11 @@ function Index() {
       });
       finishProgress(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const msg =
+        /aborted|AbortError|timed?\s?out/i.test(raw)
+          ? "Gemini took too long to respond and the request timed out. Try again, or simplify the app description (fewer features, smaller scope) so it generates faster."
+          : raw;
       pushLog(`Failed: ${msg}`, "error");
       finishProgress(false);
     } finally {

@@ -170,8 +170,8 @@ function Index() {
 
             <p className="mt-12 text-xs text-muted-foreground leading-relaxed">
               Mirrors the presentation layer only (HTML/CSS/JS/images) of publicly reachable pages.
-              Same-origin assets only, capped at 60 files and 4 MB each. Backend logic, auth, and
-              paid/proprietary code are not copied. Use on sites you have the right to copy.
+              Same-origin assets only. Backend logic, auth, and paid/proprietary code are not
+              copied. Use on sites you have the right to copy.
             </p>
           </div>
         </div>

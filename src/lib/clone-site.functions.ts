@@ -1,11 +1,28 @@
 import { createServerFn } from "@tanstack/react-start";
 import JSZip from "jszip";
+import { bytesToBase64, fetchWithTimeout } from "@/lib/http";
 
 type CloneInput = { url: string };
 
 const MAX_ASSETS = 60;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
+const USER_AGENT_HEADERS: HeadersInit = {
+  "user-agent": "Mozilla/5.0 (compatible; SiteClonerBot/1.0; +https://lovable.dev)",
+  accept: "*/*",
+};
+
+function fetchPage(url: string, init?: RequestInit) {
+  return fetchWithTimeout(
+    url,
+    {
+      ...init,
+      redirect: "follow",
+      headers: { ...USER_AGENT_HEADERS, ...(init?.headers || {}) },
+    },
+    FETCH_TIMEOUT_MS,
+  );
+}
 
 function safeSlug(u: URL) {
   return u.hostname.replace(/[^a-z0-9.-]/gi, "_") || "clone";
@@ -30,29 +47,9 @@ function pathFromUrl(u: URL, fallback: string) {
   return clean;
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: ctrl.signal,
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (compatible; SiteClonerBot/1.0; +https://lovable.dev)",
-        accept: "*/*",
-        ...(init?.headers || {}),
-      },
-      redirect: "follow",
-    });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 // Extract asset refs from HTML: link rel=stylesheet, script src, img src, favicon.
-function extractAssetRefs(html: string): { attr: string; value: string; full: string }[] {
-  const refs: { attr: string; value: string; full: string }[] = [];
+function extractAssetRefs(html: string): string[] {
+  const refs: string[] = [];
   const patterns: RegExp[] = [
     /<link[^>]+rel=["']?(?:stylesheet|icon|shortcut icon)["']?[^>]*href=["']([^"']+)["'][^>]*>/gi,
     /<link[^>]+href=["']([^"']+)["'][^>]*rel=["']?(?:stylesheet|icon|shortcut icon)["']?[^>]*>/gi,
@@ -62,9 +59,7 @@ function extractAssetRefs(html: string): { attr: string; value: string; full: st
   ];
   for (const re of patterns) {
     let m: RegExpExecArray | null;
-    while ((m = re.exec(html))) {
-      refs.push({ attr: "src/href", value: m[1], full: m[0] });
-    }
+    while ((m = re.exec(html))) refs.push(m[1]);
   }
   return refs;
 }
@@ -96,7 +91,7 @@ ${html.slice(0, 30_000)}
 ${css.slice(0, 20_000)}
 `;
 
-  const res = await fetchWithTimeout(
+  const res = await fetchPage(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -130,7 +125,7 @@ export const cloneSite = createServerFn({ method: "POST" })
     const geminiKey = process.env.GEMINI_API_KEY;
     const pageUrl = new URL(data.url);
 
-    const pageRes = await fetchWithTimeout(pageUrl.toString());
+    const pageRes = await fetchPage(pageUrl.toString());
     if (!pageRes.ok) throw new Error(`Failed to fetch page: ${pageRes.status}`);
     let html = await pageRes.text();
 
@@ -148,7 +143,7 @@ export const cloneSite = createServerFn({ method: "POST" })
       if (seen.has(key)) return seen.get(key)!;
 
       try {
-        const r = await fetchWithTimeout(key);
+        const r = await fetchPage(key);
         if (!r.ok) return null;
         const buf = new Uint8Array(await r.arrayBuffer());
         if (buf.byteLength > MAX_ASSET_BYTES) return null;
@@ -205,12 +200,12 @@ export const cloneSite = createServerFn({ method: "POST" })
     }
 
     for (const ref of refs) {
-      const abs = absoluteUrl(pageUrl, ref.value);
+      const abs = absoluteUrl(pageUrl, ref);
       if (!abs) continue;
       if (abs.origin !== pageUrl.origin) continue;
       const local = await fetchAsset(abs);
       if (local) {
-        html = html.split(ref.value).join(`./${local}`);
+        html = html.split(ref).join(`./${local}`);
       }
     }
 
@@ -241,13 +236,7 @@ No backend logic, auth, or dynamic data is included.
     );
 
     const zipBuf = await zip.generateAsync({ type: "uint8array" });
-    // Base64 encode
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < zipBuf.length; i += chunk) {
-      binary += String.fromCharCode(...zipBuf.subarray(i, i + chunk));
-    }
-    const zipBase64 = btoa(binary);
+    const zipBase64 = bytesToBase64(zipBuf);
 
     return {
       siteName: safeSlug(pageUrl),

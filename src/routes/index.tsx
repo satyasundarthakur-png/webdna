@@ -16,7 +16,8 @@ export const Route = createFileRoute("/")({
       { property: "og:title", content: "Site Cloner" },
       {
         property: "og:description",
-        content: "Mirror any public site, or build a new full-stack app with Gemini, as a downloadable ZIP.",
+        content:
+          "Mirror any public site, or build a new full-stack app with Gemini, as a downloadable ZIP.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -199,10 +200,9 @@ function Index() {
       finishProgress(true);
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      const msg =
-        /aborted|AbortError|timed?\s?out/i.test(raw)
-          ? "Gemini took too long to respond and the request timed out. Try again, or simplify the app description (fewer features, smaller scope) so it generates faster."
-          : raw;
+      const msg = /aborted|AbortError|timed?\s?out/i.test(raw)
+        ? "Gemini took too long to respond and the request timed out. Try again, or simplify the app description (fewer features, smaller scope) so it generates faster."
+        : raw;
       pushLog(`Failed: ${msg}`, "error");
       finishProgress(false);
     } finally {
@@ -249,7 +249,9 @@ function Index() {
                   onClick={() => switchMode("clone")}
                   disabled={loading}
                   className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
-                    mode === "clone" ? "rainbow-btn text-white" : "text-muted-foreground hover:text-foreground"
+                    mode === "clone"
+                      ? "rainbow-btn text-white"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Clone a site
@@ -258,7 +260,9 @@ function Index() {
                   onClick={() => switchMode("build")}
                   disabled={loading}
                   className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
-                    mode === "build" ? "rainbow-btn text-white" : "text-muted-foreground hover:text-foreground"
+                    mode === "build"
+                      ? "rainbow-btn text-white"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   Build with Gemini
@@ -369,7 +373,9 @@ function Index() {
                         </ol>
                       </div>
                     )}
-                    <p className="text-xs text-muted-foreground">{buildResult.fileCount} files generated.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {buildResult.fileCount} files generated.
+                    </p>
                   </div>
                 </div>
               )}
@@ -392,7 +398,9 @@ function Index() {
                     </h2>
                     <span
                       className={`rainbow-text text-2xl font-extrabold tabular-nums ${
-                        failed ? "!text-destructive [-webkit-text-fill-color:unset] [background:none]" : ""
+                        failed
+                          ? "!text-destructive [-webkit-text-fill-color:unset] [background:none]"
+                          : ""
                       }`}
                     >
                       {failed ? "!" : `${progress}%`}
@@ -410,13 +418,14 @@ function Index() {
 
                   <ul className="space-y-3">
                     {steps.map((s, i) => {
-                      const status: StepStatus = failed && i === stepIndex
-                        ? "error"
-                        : i < stepIndex || (i === stepIndex && progress >= s.target && !loading)
-                          ? "done"
-                          : i === stepIndex
-                            ? "active"
-                            : "pending";
+                      const status: StepStatus =
+                        failed && i === stepIndex
+                          ? "error"
+                          : i < stepIndex || (i === stepIndex && progress >= s.target && !loading)
+                            ? "done"
+                            : i === stepIndex
+                              ? "active"
+                              : "pending";
                       return (
                         <li key={s.label} className="flex items-center gap-3 text-xs">
                           <span

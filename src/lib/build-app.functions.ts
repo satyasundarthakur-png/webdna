@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import JSZip from "jszip";
+import { bytesToBase64, fetchWithTimeout } from "@/lib/http";
 
 type BuildInput = { prompt: string };
 
@@ -41,16 +42,6 @@ function slugify(text: string) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
   return s || "app";
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit | undefined, timeoutMs: number) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: ctrl.signal });
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 type GeneratedFile = { path: string; content: string };
@@ -105,7 +96,9 @@ async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction:
   const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
   const finishReason = candidate?.finishReason;
   if (!text) {
-    throw new Error(`Gemini returned an empty response${finishReason ? ` (finishReason: ${finishReason})` : ""}`);
+    throw new Error(
+      `Gemini returned an empty response${finishReason ? ` (finishReason: ${finishReason})` : ""}`,
+    );
   }
   return { text, finishReason };
 }
@@ -125,7 +118,9 @@ Rules:
 async function callGeminiBuild(apiKey: string, prompt: string): Promise<GeneratedApp> {
   async function attempt(fileCap: number, extraNote?: string) {
     const systemInstruction = systemInstructionFor(fileCap);
-    const userPrompt = extraNote ? `Build this app: ${prompt}\n\n${extraNote}` : `Build this app: ${prompt}`;
+    const userPrompt = extraNote
+      ? `Build this app: ${prompt}\n\n${extraNote}`
+      : `Build this app: ${prompt}`;
     return callGeminiOnce(apiKey, userPrompt, systemInstruction);
   }
 
@@ -218,12 +213,7 @@ Review the generated code before deploying — it's an AI-generated starting poi
     zip.file("README.md", readme);
 
     const zipBuf = await zip.generateAsync({ type: "uint8array" });
-    let binary = "";
-    const chunk = 0x8000;
-    for (let i = 0; i < zipBuf.length; i += chunk) {
-      binary += String.fromCharCode(...zipBuf.subarray(i, i + chunk));
-    }
-    const zipBase64 = btoa(binary);
+    const zipBase64 = bytesToBase64(zipBuf);
 
     return {
       projectName: slugify(app.projectName || "generated-app"),

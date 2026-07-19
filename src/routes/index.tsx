@@ -92,83 +92,89 @@ function Index() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    <div className="min-h-screen text-foreground flex flex-col">
       <main className="mx-auto w-full max-w-3xl px-6 py-20 flex-1">
-        <div className="mb-10">
-          <div className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-muted-foreground mb-6">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Powered by Gemini 2.5 Flash Lite
-          </div>
-          <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">Site Cloner</h1>
-          <p className="mt-4 text-muted-foreground max-w-xl">
-            Paste any public URL. Get back a downloadable ZIP of the site — HTML, CSS, JS, and
-            images mirrored, plus an AI-generated design summary.
-          </p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            className="flex-1 rounded-md border border-input bg-card px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
-            onKeyDown={(e) => e.key === "Enter" && !loading && handleClone()}
-          />
-          <button
-            onClick={handleClone}
-            disabled={loading}
-            className="rounded-md bg-primary text-primary-foreground px-5 py-3 text-sm font-medium hover:opacity-90 disabled:opacity-50 transition"
-          >
-            {loading ? "Cloning…" : "Clone site"}
-          </button>
-        </div>
-
-        {logs.length > 0 && (
-          <div className="mt-8 rounded-md border border-border bg-card p-4 font-mono text-xs space-y-1">
-            {logs.map((l, i) => (
-              <div
-                key={i}
-                className={
-                  l.kind === "error"
-                    ? "text-destructive"
-                    : l.kind === "done"
-                      ? "text-emerald-500"
-                      : "text-muted-foreground"
-                }
-              >
-                › {l.text}
+        <div className="rainbow-border-wrap rainbow-card">
+          <div className="rounded-[calc(1rem-3px)] bg-background/95 backdrop-blur-xl px-6 py-10 sm:px-10 sm:py-12">
+            <div className="mb-10">
+              <div className="rainbow-float inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-muted-foreground mb-6 shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Powered by Gemini 2.5 Flash Lite
               </div>
-            ))}
-          </div>
-        )}
+              <h1 className="rainbow-text text-4xl sm:text-5xl font-extrabold tracking-tight">
+                Site Cloner
+              </h1>
+              <p className="mt-4 text-muted-foreground max-w-xl">
+                Paste any public URL. Get back a downloadable ZIP of the site — HTML, CSS, JS, and
+                images mirrored, plus an AI-generated design summary.
+              </p>
+            </div>
 
-        {result && (
-          <div className="mt-6 space-y-4">
-            <button
-              onClick={downloadZip}
-              className="w-full rounded-md bg-emerald-600 text-white px-5 py-3 text-sm font-medium hover:bg-emerald-500 transition"
-            >
-              Download {result.siteName}.zip
-            </button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://example.com"
+                className="flex-1 rounded-md border border-input bg-card px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
+                onKeyDown={(e) => e.key === "Enter" && !loading && handleClone()}
+              />
+              <button
+                onClick={handleClone}
+                disabled={loading}
+                className="rainbow-btn rounded-md text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+              >
+                {loading ? "Cloning…" : "Clone site"}
+              </button>
+            </div>
 
-            {result.summary && (
-              <details className="rounded-md border border-border bg-card p-4 text-sm">
-                <summary className="cursor-pointer font-medium">
-                  View design summary (DESIGN_SUMMARY.md)
-                </summary>
-                <pre className="mt-4 whitespace-pre-wrap text-xs text-muted-foreground">
-                  {result.summary}
-                </pre>
-              </details>
+            {logs.length > 0 && (
+              <div className="mt-8 rounded-md border border-border bg-card p-4 font-mono text-xs space-y-1 animate-in fade-in slide-in-from-top-2">
+                {logs.map((l, i) => (
+                  <div
+                    key={i}
+                    className={
+                      l.kind === "error"
+                        ? "text-destructive"
+                        : l.kind === "done"
+                          ? "text-emerald-500 font-semibold"
+                          : "text-muted-foreground"
+                    }
+                  >
+                    › {l.text}
+                  </div>
+                ))}
+              </div>
             )}
-          </div>
-        )}
 
-        <p className="mt-12 text-xs text-muted-foreground leading-relaxed">
-          Mirrors the presentation layer only (HTML/CSS/JS/images) of publicly reachable pages.
-          Same-origin assets only, capped at 60 files and 4 MB each. Backend logic, auth, and
-          paid/proprietary code are not copied. Use on sites you have the right to copy.
-        </p>
+            {result && (
+              <div className="mt-6 space-y-4">
+                <button
+                  onClick={downloadZip}
+                  className="rainbow-btn w-full rounded-md text-white px-5 py-3 text-sm font-semibold"
+                >
+                  🎉 Download {result.siteName}.zip
+                </button>
+
+                {result.summary && (
+                  <details className="rounded-md border border-border bg-card p-4 text-sm">
+                    <summary className="cursor-pointer font-medium">
+                      View design summary (DESIGN_SUMMARY.md)
+                    </summary>
+                    <pre className="mt-4 whitespace-pre-wrap text-xs text-muted-foreground">
+                      {result.summary}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            )}
+
+            <p className="mt-12 text-xs text-muted-foreground leading-relaxed">
+              Mirrors the presentation layer only (HTML/CSS/JS/images) of publicly reachable pages.
+              Same-origin assets only, capped at 60 files and 4 MB each. Backend logic, auth, and
+              paid/proprietary code are not copied. Use on sites you have the right to copy.
+            </p>
+          </div>
+        </div>
       </main>
     </div>
   );

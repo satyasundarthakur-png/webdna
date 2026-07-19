@@ -138,7 +138,96 @@
   }
 
   body {
-    background-color: var(--color-background);
+    background: linear-gradient(
+      -45deg,
+      #ff0080,
+      #ff8c00,
+      #ffed00,
+      #00c853,
+      #00b8ff,
+      #7c4dff,
+      #ff0080
+    );
+    background-size: 400% 400%;
+    animation: rainbow-shift 18s ease infinite;
     color: var(--color-foreground);
   }
+}
+
+@keyframes rainbow-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes float-up {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.rainbow-text {
+  background: linear-gradient(90deg, #ff0080, #ff8c00, #ffed00, #00c853, #00b8ff, #7c4dff, #ff0080);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rainbow-shift 6s linear infinite;
+}
+
+.rainbow-card {
+  animation: pop-in 0.5s ease both;
+  position: relative;
+}
+
+.rainbow-border-wrap {
+  position: relative;
+  border-radius: 1rem;
+  padding: 3px;
+  background: linear-gradient(90deg, #ff0080, #ff8c00, #ffed00, #00c853, #00b8ff, #7c4dff, #ff0080);
+  background-size: 300% auto;
+  animation: rainbow-shift 5s linear infinite;
+}
+
+.rainbow-float {
+  animation: float-up 3s ease-in-out infinite;
+}
+
+.rainbow-btn {
+  background: linear-gradient(90deg, #ff0080, #ff8c00, #ffed00, #00c853, #00b8ff, #7c4dff);
+  background-size: 300% auto;
+  animation: rainbow-shift 4s linear infinite;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rainbow-btn:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 10px 30px -8px rgba(124, 77, 255, 0.6);
+}
+
+.rainbow-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
 }

@@ -2,20 +2,21 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { cloneSite } from "@/lib/clone-site.functions";
+import { buildApp } from "@/lib/build-app.functions";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Site Cloner — mirror any site to a downloadable ZIP" },
+      { title: "Site Cloner — mirror any site or build a new app with Gemini" },
       {
         name: "description",
         content:
-          "Paste a URL, get a ZIP of the site: HTML, CSS, JS, images, plus a Gemini-generated design summary.",
+          "Paste a URL to mirror a site, or describe an app and let Gemini write the full-stack code — either way, get a downloadable ZIP.",
       },
       { property: "og:title", content: "Site Cloner" },
       {
         property: "og:description",
-        content: "Mirror any public site into a downloadable codebase, with an AI design summary.",
+        content: "Mirror any public site, or build a new full-stack app with Gemini, as a downloadable ZIP.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -25,6 +26,7 @@ export const Route = createFileRoute("/")({
 });
 
 type LogLine = { text: string; kind?: "info" | "done" | "error" };
+type Mode = "clone" | "build";
 
 function isValidUrl(value: string) {
   try {
@@ -37,17 +39,39 @@ function isValidUrl(value: string) {
 
 function Index() {
   const clone = useServerFn(cloneSite);
+  const build = useServerFn(buildApp);
+
+  const [mode, setMode] = useState<Mode>("clone");
+
   const [url, setUrl] = useState("");
+  const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
-  const [result, setResult] = useState<{
+
+  const [cloneResult, setCloneResult] = useState<{
     zipBase64: string;
     siteName: string;
     summary: string | null;
   } | null>(null);
 
+  const [buildResult, setBuildResult] = useState<{
+    zipBase64: string;
+    projectName: string;
+    stack: string;
+    description: string;
+    setup: string[];
+    fileCount: number;
+  } | null>(null);
+
   const pushLog = (text: string, kind: LogLine["kind"] = "info") =>
     setLogs((prev) => [...prev, { text, kind }]);
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setLogs([]);
+    setCloneResult(null);
+    setBuildResult(null);
+  }
 
   async function handleClone() {
     if (!isValidUrl(url)) {
@@ -55,7 +79,7 @@ function Index() {
       return;
     }
     setLoading(true);
-    setResult(null);
+    setCloneResult(null);
     setLogs([{ text: `Fetching ${url}…` }]);
     try {
       const data = await clone({ data: { url } });
@@ -65,7 +89,7 @@ function Index() {
       else if (!data.geminiConfigured)
         pushLog("Gemini key not configured — skipping design summary.", "error");
       pushLog("Packaged ZIP is ready.", "done");
-      setResult({
+      setCloneResult({
         zipBase64: data.zipBase64,
         siteName: data.siteName,
         summary: data.geminiSummary,
@@ -78,15 +102,43 @@ function Index() {
     }
   }
 
-  function downloadZip() {
-    if (!result) return;
-    const binary = atob(result.zipBase64);
+  async function handleBuild() {
+    if (!prompt.trim()) {
+      setLogs([{ text: "Describe the app you want built first.", kind: "error" }]);
+      return;
+    }
+    setLoading(true);
+    setBuildResult(null);
+    setLogs([{ text: "Sending your spec to Gemini…" }]);
+    try {
+      const data = await build({ data: { prompt } });
+      pushLog(`Gemini designed "${data.projectName}" (${data.stack}).`);
+      pushLog(`Wrote ${data.fileCount} files (${data.totalSizeKB} KB).`);
+      pushLog("Packaged ZIP is ready.", "done");
+      setBuildResult({
+        zipBase64: data.zipBase64,
+        projectName: data.projectName,
+        stack: data.stack,
+        description: data.description,
+        setup: data.setup,
+        fileCount: data.fileCount,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      pushLog(`Failed: ${msg}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function downloadZip(zipBase64: string, name: string) {
+    const binary = atob(zipBase64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const blob = new Blob([bytes], { type: "application/zip" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `${result.siteName}.zip`;
+    link.download = `${name}.zip`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
@@ -99,33 +151,71 @@ function Index() {
             <div className="mb-10">
               <div className="rainbow-float inline-flex items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-1 text-xs text-muted-foreground mb-6 shadow-sm">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Powered by Gemini 2.5 Flash Lite
+                Powered by Gemini
               </div>
               <h1 className="rainbow-text text-4xl sm:text-5xl font-extrabold tracking-tight">
                 Site Cloner
               </h1>
               <p className="mt-4 text-muted-foreground max-w-xl">
-                Paste any public URL. Get back a downloadable ZIP of the site — HTML, CSS, JS, and
-                images mirrored, plus an AI-generated design summary.
+                Mirror any public site, or describe a full-stack app and let Gemini write the
+                code. Either way, you get a downloadable ZIP.
               </p>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com"
-                className="flex-1 rounded-md border border-input bg-card px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
-                onKeyDown={(e) => e.key === "Enter" && !loading && handleClone()}
-              />
+            <div className="mb-6 inline-flex rounded-lg border border-border bg-muted/40 p-1 text-sm">
               <button
-                onClick={handleClone}
-                disabled={loading}
-                className="rainbow-btn rounded-md text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                onClick={() => switchMode("clone")}
+                className={`rounded-md px-4 py-2 font-medium transition ${
+                  mode === "clone" ? "rainbow-btn text-white" : "text-muted-foreground hover:text-foreground"
+                }`}
               >
-                {loading ? "Cloning…" : "Clone site"}
+                Clone a site
+              </button>
+              <button
+                onClick={() => switchMode("build")}
+                className={`rounded-md px-4 py-2 font-medium transition ${
+                  mode === "build" ? "rainbow-btn text-white" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Build with Gemini
               </button>
             </div>
+
+            {mode === "clone" ? (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://example.com"
+                  className="flex-1 rounded-md border border-input bg-card px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
+                  onKeyDown={(e) => e.key === "Enter" && !loading && handleClone()}
+                />
+                <button
+                  onClick={handleClone}
+                  disabled={loading}
+                  className="rainbow-btn rounded-md text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                >
+                  {loading ? "Cloning…" : "Clone site"}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="e.g. A React + Express task tracker with login, boards, and drag-and-drop cards stored in a local JSON file."
+                  rows={4}
+                  className="flex-1 resize-y rounded-md border border-input bg-card px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring transition"
+                />
+                <button
+                  onClick={handleBuild}
+                  disabled={loading}
+                  className="rainbow-btn self-end rounded-md text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                >
+                  {loading ? "Building…" : "Build app"}
+                </button>
+              </div>
+            )}
 
             {logs.length > 0 && (
               <div className="mt-8 rounded-md border border-border bg-card p-4 font-mono text-xs space-y-1 animate-in fade-in slide-in-from-top-2">
@@ -146,32 +236,64 @@ function Index() {
               </div>
             )}
 
-            {result && (
+            {mode === "clone" && cloneResult && (
               <div className="mt-6 space-y-4">
                 <button
-                  onClick={downloadZip}
+                  onClick={() => downloadZip(cloneResult.zipBase64, cloneResult.siteName)}
                   className="rainbow-btn w-full rounded-md text-white px-5 py-3 text-sm font-semibold"
                 >
-                  🎉 Download {result.siteName}.zip
+                  🎉 Download {cloneResult.siteName}.zip
                 </button>
 
-                {result.summary && (
+                {cloneResult.summary && (
                   <details className="rounded-md border border-border bg-card p-4 text-sm">
                     <summary className="cursor-pointer font-medium">
                       View design summary (DESIGN_SUMMARY.md)
                     </summary>
                     <pre className="mt-4 whitespace-pre-wrap text-xs text-muted-foreground">
-                      {result.summary}
+                      {cloneResult.summary}
                     </pre>
                   </details>
                 )}
               </div>
             )}
 
+            {mode === "build" && buildResult && (
+              <div className="mt-6 space-y-4">
+                <button
+                  onClick={() => downloadZip(buildResult.zipBase64, buildResult.projectName)}
+                  className="rainbow-btn w-full rounded-md text-white px-5 py-3 text-sm font-semibold"
+                >
+                  🎉 Download {buildResult.projectName}.zip
+                </button>
+
+                <div className="rounded-md border border-border bg-card p-4 text-sm space-y-2">
+                  <div>
+                    <span className="font-medium">Stack:</span>{" "}
+                    <span className="text-muted-foreground">{buildResult.stack}</span>
+                  </div>
+                  {buildResult.description && (
+                    <p className="text-muted-foreground">{buildResult.description}</p>
+                  )}
+                  {buildResult.setup.length > 0 && (
+                    <div>
+                      <p className="font-medium mb-1">Setup</p>
+                      <ol className="list-decimal list-inside text-muted-foreground space-y-0.5 font-mono text-xs">
+                        {buildResult.setup.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground">{buildResult.fileCount} files generated.</p>
+                </div>
+              </div>
+            )}
+
             <p className="mt-12 text-xs text-muted-foreground leading-relaxed">
-              Mirrors the presentation layer only (HTML/CSS/JS/images) of publicly reachable pages.
-              Same-origin assets only. Backend logic, auth, and paid/proprietary code are not
-              copied. Use on sites you have the right to copy.
+              {mode === "clone"
+                ? "Mirrors the presentation layer only (HTML/CSS/JS/images) of publicly reachable pages. Same-origin assets only. Backend logic, auth, and paid/proprietary code are not copied. Use on sites you have the right to copy."
+                : "Code is generated by Gemini from your description as a working starting point — review it before running or deploying, and treat any generated secrets/config as placeholders to replace."}
             </p>
           </div>
         </div>

@@ -109,6 +109,19 @@ function Index() {
     setFailed(false);
   }
 
+  function resetRun() {
+    if (loading) return;
+    if (progressTimer.current) clearInterval(progressTimer.current);
+    setLogs([]);
+    setCloneResult(null);
+    setBuildResult(null);
+    setProgress(0);
+    setStepIndex(-1);
+    setFailed(false);
+    setUrl("");
+    setPrompt("");
+  }
+
   function startProgress(forMode: Mode) {
     const list = forMode === "clone" ? CLONE_STEPS : BUILD_STEPS;
     setFailed(false);
@@ -244,29 +257,41 @@ function Index() {
                 </p>
               </div>
 
-              <div className="mb-6 inline-flex rounded-lg border border-border bg-muted/40 p-1 text-sm">
-                <button
-                  onClick={() => switchMode("clone")}
-                  disabled={loading}
-                  className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
-                    mode === "clone"
-                      ? "rainbow-btn text-white"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Clone a site
-                </button>
-                <button
-                  onClick={() => switchMode("build")}
-                  disabled={loading}
-                  className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
-                    mode === "build"
-                      ? "rainbow-btn text-white"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  Build with Gemini
-                </button>
+              <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex rounded-lg border border-border bg-muted/40 p-1 text-sm">
+                  <button
+                    onClick={() => switchMode("clone")}
+                    disabled={loading}
+                    className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
+                      mode === "clone"
+                        ? "rainbow-btn text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Clone a site
+                  </button>
+                  <button
+                    onClick={() => switchMode("build")}
+                    disabled={loading}
+                    className={`rounded-md px-4 py-2 font-medium transition disabled:cursor-not-allowed ${
+                      mode === "build"
+                        ? "rainbow-btn text-white"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    Build with Gemini
+                  </button>
+                </div>
+
+                {(url || prompt || logs.length > 0 || cloneResult || buildResult) && (
+                  <button
+                    onClick={resetRun}
+                    disabled={loading}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <span aria-hidden>↺</span> Reset
+                  </button>
+                )}
               </div>
 
               {mode === "clone" ? (
@@ -462,6 +487,15 @@ function Index() {
                       ? "Non-AI steps (fetch/download/package) plus an AI step for the Gemini design summary."
                       : "One AI step does the heavy lifting: Gemini plans and writes every file, then it's zipped up."}
                   </p>
+
+                  {!loading && (progress > 0 || failed) && (
+                    <button
+                      onClick={resetRun}
+                      className="mt-4 w-full rounded-md border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-foreground/30 transition"
+                    >
+                      ↺ Start a new run
+                    </button>
+                  )}
                 </div>
               </div>
             </aside>

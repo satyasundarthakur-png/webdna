@@ -13,28 +13,6 @@ const MAX_FILE_BYTES = 300 * 1024;
 // full-app code doesn't get cut off mid-file.
 const MAX_OUTPUT_TOKENS = 65_536;
 
-const RESPONSE_SCHEMA = {
-  type: "OBJECT",
-  properties: {
-    projectName: { type: "STRING" },
-    stack: { type: "STRING" },
-    description: { type: "STRING" },
-    setup: { type: "ARRAY", items: { type: "STRING" } },
-    files: {
-      type: "ARRAY",
-      items: {
-        type: "OBJECT",
-        properties: {
-          path: { type: "STRING" },
-          content: { type: "STRING" },
-        },
-        required: ["path", "content"],
-      },
-    },
-  },
-  required: ["projectName", "stack", "description", "files"],
-};
-
 function slugify(text: string) {
   const s = text
     .toLowerCase()
@@ -53,15 +31,63 @@ type GeneratedApp = {
   files: GeneratedFile[];
 };
 
-function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1] : text;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Gemini response did not contain valid JSON");
+// Plain-text, delimiter-based output protocol (instead of JSON mode).
+// JSON-escaping full source files makes models write shorter, lazier,
+// more placeholder-y code — asking for raw text between markers lets
+// Gemini write real, natural code with no escaping tax.
+const FILE_START = /^@@FILE:\s*(.+?)\s*$/;
+const FILE_END = /^@@ENDFILE\s*$/;
+const META_START = /^@@META\s*$/;
+const META_END = /^@@ENDMETA\s*$/;
+
+function parseGeneratedApp(text: string): GeneratedApp {
+  const lines = text.split("\n");
+
+  let projectName = "";
+  let stack = "";
+  let description = "";
+  const setup: string[] = [];
+  const files: GeneratedFile[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (META_START.test(line)) {
+      i += 1;
+      while (i < lines.length && !META_END.test(lines[i])) {
+        const m = lines[i].match(/^(\w+):\s*(.*)$/);
+        if (m) {
+          const [, key, value] = m;
+          if (key === "projectName") projectName = value.trim();
+          else if (key === "stack") stack = value.trim();
+          else if (key === "description") description = value.trim();
+          else if (key === "setup") setup.push(value.trim());
+        }
+        i += 1;
+      }
+      i += 1; // skip @@ENDMETA
+      continue;
+    }
+
+    const fileMatch = line.match(FILE_START);
+    if (fileMatch) {
+      const path = fileMatch[1];
+      i += 1;
+      const contentLines: string[] = [];
+      while (i < lines.length && !FILE_END.test(lines[i])) {
+        contentLines.push(lines[i]);
+        i += 1;
+      }
+      i += 1; // skip @@ENDFILE
+      files.push({ path, content: contentLines.join("\n") });
+      continue;
+    }
+
+    i += 1;
   }
-  return candidate.slice(start, end + 1);
+
+  return { projectName, stack, description, setup, files };
 }
 
 async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction: string) {
@@ -74,10 +100,8 @@ async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction:
         systemInstruction: { role: "system", parts: [{ text: systemInstruction }] },
         contents: [{ role: "user", parts: [{ text: `Build this app: ${prompt}` }] }],
         generationConfig: {
-          temperature: 0.3,
+          temperature: 0.4,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
         },
       }),
     },
@@ -104,15 +128,31 @@ async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction:
 }
 
 function systemInstructionFor(fileCap: number) {
-  return `You are a senior full-stack engineer. Given a plain-language app request, design and write a complete, working, minimal-but-functional full-stack web application.
+  return `You are a senior full-stack engineer. Given a plain-language app request, design and write a complete, WORKING full-stack web application. Write real, functional code — no TODOs, no "implement this later" placeholders, no stub functions. Every feature the user asked for must actually be implemented.
 
-Rules:
-- Prefer a React + Vite + TypeScript frontend and a small Node/Express (or equivalent lightweight) backend, unless the request clearly implies something else.
-- Include package.json (with correct dependencies/scripts), config files, and a README with setup + run instructions.
-- Keep it runnable locally with "npm install" then the documented start command. Use in-memory or file-based storage if no database is specified, and clearly note that in the README.
-- Do not invent external paid API keys as hard requirements; if an AI/API key is used, read it from an environment variable and degrade gracefully if missing.
-- Keep the file count under ${fileCap} and each file concise, with no comments and minimal whitespace — this is a working starter/MVP, not an enterprise monorepo. Favor fewer, denser files over many tiny ones so generation finishes reliably and is never cut off.
-- Return ONLY JSON matching the provided response schema. Every file's "content" must be the complete literal file contents, not a placeholder or diff.`;
+Stack defaults: React + Vite + TypeScript frontend, small Node/Express (or equivalent lightweight) backend, unless the request clearly implies something else. Use in-memory or file-based storage if no database is specified, and note that clearly in the README. Read any AI/API keys from environment variables and degrade gracefully if missing — never hard-require a paid key.
+
+Keep the file count under ${fileCap}. Favor fewer, complete files over many tiny stub files — but never sacrifice correctness or completeness to save space. Include package.json with correct dependencies and scripts, needed config files, and a README with setup + run instructions.
+
+Output format — this is critical, follow it exactly:
+
+Start with a metadata block:
+
+@@META
+projectName: kebab-case-name
+stack: short description, e.g. React + Vite + Express
+description: 1-2 sentence summary of what the app does
+setup: step 1 (e.g. npm install)
+setup: step 2 (e.g. npm run dev)
+@@ENDMETA
+
+Then one block per file, in this exact form, with the complete literal file contents between the markers (no escaping, no markdown code fences, no extra commentary):
+
+@@FILE: relative/path/to/file.ext
+<the full raw file contents go here, verbatim>
+@@ENDFILE
+
+Repeat the @@FILE / @@ENDFILE block for every file. Output nothing before @@META and nothing after the final @@ENDFILE — no prose, no explanations, no markdown fences anywhere.`;
 }
 
 async function callGeminiBuild(apiKey: string, prompt: string): Promise<GeneratedApp> {
@@ -136,26 +176,24 @@ async function callGeminiBuild(apiKey: string, prompt: string): Promise<Generate
     result = await attempt(25);
   }
 
-  // If Gemini ran out of output budget mid-generation, retry once with a
-  // deliberately smaller scope instead of failing outright.
-  if (result.finishReason === "MAX_TOKENS") {
+  let parsed = parseGeneratedApp(result.text);
+
+  // If Gemini ran out of output budget mid-generation, or the protocol
+  // didn't parse into any files, retry once with a deliberately smaller scope
+  // instead of failing outright.
+  if (result.finishReason === "MAX_TOKENS" || parsed.files.length === 0) {
     result = await attempt(
       10,
-      "Your previous attempt was too large and got cut off. This time, produce a much smaller MVP: fewer files, terser code, no comments, and skip anything non-essential to the core feature.",
+      "Your previous attempt was too large, got cut off, or didn't follow the output format. This time: produce a much smaller MVP (fewer files, terser but still complete and working code), and follow the @@META / @@FILE / @@ENDFILE format exactly with no deviation.",
     );
+    parsed = parseGeneratedApp(result.text);
   }
 
-  let parsed: GeneratedApp;
-  try {
-    parsed = JSON.parse(extractJson(result.text)) as GeneratedApp;
-  } catch {
+  if (parsed.files.length === 0) {
     const reasonNote = result.finishReason === "MAX_TOKENS" ? " (response was truncated)" : "";
     throw new Error(
-      `Gemini's response got cut off or wasn't valid JSON${reasonNote} — try a shorter/simpler app description and build again.`,
+      `Gemini didn't return any usable files${reasonNote} — try a shorter/simpler app description and build again.`,
     );
-  }
-  if (!parsed.files || !Array.isArray(parsed.files) || parsed.files.length === 0) {
-    throw new Error("Gemini response had no files");
   }
   return parsed;
 }
@@ -182,13 +220,17 @@ export const buildApp = createServerFn({ method: "POST" })
 
     for (const f of app.files) {
       if (fileCount >= MAX_FILES) break;
-      if (!f.path || typeof f.content !== "string") continue;
+      if (!f.path || typeof f.content !== "string" || !f.content.trim()) continue;
       const cleanPath = f.path.replace(/^\/+/, "").replace(/\.\.+/g, ".");
       const bytes = new TextEncoder().encode(f.content);
       if (bytes.byteLength > MAX_FILE_BYTES) continue;
       zip.file(cleanPath, f.content);
       fileCount += 1;
       totalBytes += bytes.byteLength;
+    }
+
+    if (fileCount === 0) {
+      throw new Error("Gemini's files were empty after filtering — try building again.");
     }
 
     const readme = `# ${app.projectName || "Generated App"}

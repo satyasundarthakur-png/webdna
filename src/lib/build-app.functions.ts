@@ -8,7 +8,31 @@ type BuildInput = { prompt: string };
 const GEMINI_TIMEOUT_MS = 240_000; // 4 minutes
 const MAX_FILES = 80;
 const MAX_FILE_BYTES = 300 * 1024;
-const MAX_OUTPUT_TOKENS = 32_768;
+// Gemini's max output for 2.5 Flash; give generation the full budget so
+// full-app code doesn't get cut off mid-file.
+const MAX_OUTPUT_TOKENS = 65_536;
+
+const RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    projectName: { type: "STRING" },
+    stack: { type: "STRING" },
+    description: { type: "STRING" },
+    setup: { type: "ARRAY", items: { type: "STRING" } },
+    files: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          path: { type: "STRING" },
+          content: { type: "STRING" },
+        },
+        required: ["path", "content"],
+      },
+    },
+  },
+  required: ["projectName", "stack", "description", "files"],
+};
 
 function slugify(text: string) {
   const s = text
@@ -62,6 +86,7 @@ async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction:
           temperature: 0.3,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
         },
       }),
     },
@@ -78,55 +103,60 @@ async function callGeminiOnce(apiKey: string, prompt: string, systemInstruction:
   };
   const candidate = json.candidates?.[0];
   const text = candidate?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  const finishReason = candidate?.finishReason;
   if (!text) {
-    const reason = candidate?.finishReason ? ` (finishReason: ${candidate.finishReason})` : "";
-    throw new Error(`Gemini returned an empty response${reason}`);
+    throw new Error(`Gemini returned an empty response${finishReason ? ` (finishReason: ${finishReason})` : ""}`);
   }
-  return text;
+  return { text, finishReason };
 }
 
-async function callGeminiBuild(apiKey: string, prompt: string): Promise<GeneratedApp> {
-  const systemInstruction = `You are a senior full-stack engineer. Given a plain-language app request, design and write a complete, working, minimal-but-functional full-stack web application.
+function systemInstructionFor(fileCap: number) {
+  return `You are a senior full-stack engineer. Given a plain-language app request, design and write a complete, working, minimal-but-functional full-stack web application.
 
 Rules:
 - Prefer a React + Vite + TypeScript frontend and a small Node/Express (or equivalent lightweight) backend, unless the request clearly implies something else.
 - Include package.json (with correct dependencies/scripts), config files, and a README with setup + run instructions.
 - Keep it runnable locally with "npm install" then the documented start command. Use in-memory or file-based storage if no database is specified, and clearly note that in the README.
 - Do not invent external paid API keys as hard requirements; if an AI/API key is used, read it from an environment variable and degrade gracefully if missing.
-- Keep the file count under 25 and each file concise — this is a working starter/MVP, not an enterprise monorepo. Favor fewer, denser files over many tiny ones so generation finishes reliably.
-- Return ONLY valid JSON matching exactly this shape, no prose outside the JSON, no markdown fences:
-
-{
-  "projectName": "kebab-case-name",
-  "stack": "short description e.g. React + Vite + Express",
-  "description": "1-2 sentence summary of what the app does",
-  "setup": ["step 1", "step 2", "..."],
-  "files": [
-    { "path": "package.json", "content": "..." },
-    { "path": "src/App.tsx", "content": "..." }
-  ]
+- Keep the file count under ${fileCap} and each file concise, with no comments and minimal whitespace — this is a working starter/MVP, not an enterprise monorepo. Favor fewer, denser files over many tiny ones so generation finishes reliably and is never cut off.
+- Return ONLY JSON matching the provided response schema. Every file's "content" must be the complete literal file contents, not a placeholder or diff.`;
 }
 
-Every file's "content" must be the complete literal file contents (escaped for JSON string), not a placeholder or diff.`;
+async function callGeminiBuild(apiKey: string, prompt: string): Promise<GeneratedApp> {
+  async function attempt(fileCap: number, extraNote?: string) {
+    const systemInstruction = systemInstructionFor(fileCap);
+    const userPrompt = extraNote ? `Build this app: ${prompt}\n\n${extraNote}` : `Build this app: ${prompt}`;
+    return callGeminiOnce(apiKey, userPrompt, systemInstruction);
+  }
 
-  let text: string;
+  let result: { text: string; finishReason?: string };
   try {
-    text = await callGeminiOnce(apiKey, prompt, systemInstruction);
+    result = await attempt(25);
   } catch (err) {
     const isAbort = err instanceof Error && err.name === "AbortError";
     const isTransient =
       isAbort || (err instanceof Error && /Gemini (429|500|502|503|504)/.test(err.message));
     if (!isTransient) throw err;
     // one retry — codegen calls occasionally time out or hit a transient 5xx
-    text = await callGeminiOnce(apiKey, prompt, systemInstruction);
+    result = await attempt(25);
+  }
+
+  // If Gemini ran out of output budget mid-generation, retry once with a
+  // deliberately smaller scope instead of failing outright.
+  if (result.finishReason === "MAX_TOKENS") {
+    result = await attempt(
+      10,
+      "Your previous attempt was too large and got cut off. This time, produce a much smaller MVP: fewer files, terser code, no comments, and skip anything non-essential to the core feature.",
+    );
   }
 
   let parsed: GeneratedApp;
   try {
-    parsed = JSON.parse(extractJson(text)) as GeneratedApp;
+    parsed = JSON.parse(extractJson(result.text)) as GeneratedApp;
   } catch {
+    const reasonNote = result.finishReason === "MAX_TOKENS" ? " (response was truncated)" : "";
     throw new Error(
-      "Gemini's response got cut off or wasn't valid JSON — try a shorter/simpler app description and build again.",
+      `Gemini's response got cut off or wasn't valid JSON${reasonNote} — try a shorter/simpler app description and build again.`,
     );
   }
   if (!parsed.files || !Array.isArray(parsed.files) || parsed.files.length === 0) {
